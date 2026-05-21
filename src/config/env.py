@@ -29,6 +29,12 @@ class AppEnv(BaseSettings):
     # Threats matching these are auto-escalated to CRITICAL + TOP_PRIORITY.
     SECURITY_MONITORED_PACKAGES: str = ""
 
+    # Maximum number of intel items passed to the LLM for triage.
+    SECURITY_MAX_TRIAGE_ITEMS: int = 40
+
+    # Maximum number of threats included in the final output.
+    SECURITY_MAX_ALERT_THREATS: int = 10
+
     @field_validator("GEMINI_API_BASE")
     @classmethod
     def _validate_gemini_base(cls, v: str) -> str:

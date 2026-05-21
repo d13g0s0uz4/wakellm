@@ -12,9 +12,11 @@
 #   --prod           Target prod job (default; deploy update-only)
 #
 # Environment overrides (optional):
-#   SKIP_SCAN=1      Bypass Trivy scan during --deploy
-#   TAG=<git-sha>    Override the image tag (default: git short SHA)
-#   JOB_NAME=<name>  Override resolved job name
+#   SKIP_SCAN=1                        Bypass Trivy scan during --deploy
+#   TAG=<git-sha>                      Override the image tag (default: git short SHA)
+#   JOB_NAME=<name>                    Override resolved job name
+#   SECURITY_MAX_TRIAGE_ITEMS=<n>      Items fed to LLM for triage (default: 40)
+#   SECURITY_MAX_ALERT_THREATS=<n>     Threats in final output (default: 10)
 #
 # Prerequisites:
 #   gcloud auth login
@@ -170,6 +172,8 @@ LATEST_IMAGE="$IMAGE:latest"
 
 NODE_ENV_VALUE="${NODE_ENV:-$([[ "$ENVIRONMENT" == "dev" ]] && echo development || echo production)}"
 ENV_VARS_CSV="NODE_ENV=$NODE_ENV_VALUE"
+[[ -n "${SECURITY_MAX_TRIAGE_ITEMS:-}" ]]  && ENV_VARS_CSV+=",SECURITY_MAX_TRIAGE_ITEMS=$SECURITY_MAX_TRIAGE_ITEMS"
+[[ -n "${SECURITY_MAX_ALERT_THREATS:-}" ]] && ENV_VARS_CSV+=",SECURITY_MAX_ALERT_THREATS=$SECURITY_MAX_ALERT_THREATS"
 
 echo ""
 echo "════════════════════════════════════════"

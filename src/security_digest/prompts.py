@@ -5,6 +5,7 @@ def get_security_triage_prompt(
     intel_json: str,
     monitored_packages: list[str] | None = None,
     global_context: str = "",
+    max_threats: int = 10,
 ) -> str:
     monitored_line = ", ".join(monitored_packages or []) if monitored_packages else "(none provided)"
     context_line = f"\nAdditional context: {global_context}" if global_context else ""
@@ -19,7 +20,7 @@ Threat level rubric:
 1. Discard any vulnerabilities related to WordPress, Windows OS, or hardware.
 2. Isolate threats specifically related to: 'npm', 'PyPI', 'supply chain', 'typosquatting', or 'malicious packages'.
 3. For the relevant threats, assign a Threat Level using the rubric above.
-4. Return at most 10 threats, prioritising CRITICAL over HIGH over MEDIUM.
+4. Return at most {max_threats} threats, prioritising CRITICAL over HIGH over MEDIUM.
 5. Output strictly as JSON:
 {{
   "threats": [

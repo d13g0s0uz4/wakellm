@@ -3,14 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from src.config.env import env
 from src.security_digest.utils import (
     _build_dedup_key,
     _normalize_cve_id,
     _normalize_optional_text,
 )
-
-_MAX_TRIAGE_INTEL_ITEMS = 40
-_MAX_ALERT_THREATS = 10
 
 
 def _normalize_intel(items: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -70,7 +68,7 @@ def _prioritize_intel_for_triage(intel_items: list[dict[str, str]]) -> list[dict
         return (source_priority, ecosystem_priority + cve_priority, recency)
 
     prioritized = sorted(intel_items, key=_rank)
-    return prioritized[:_MAX_TRIAGE_INTEL_ITEMS]
+    return prioritized[:env.SECURITY_MAX_TRIAGE_ITEMS]
 
 
 def _fallback_threats_from_intel(intel_items: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -119,10 +117,11 @@ def _select_alert_threats(threats: list[dict[str, Any]]) -> list[dict[str, Any]]
     high = [t for t in threats if t.get("threat_level") == "HIGH"]
 
     selected = [*top_priority, *critical]
-    if len(selected) >= _MAX_ALERT_THREATS:
-        return selected[:_MAX_ALERT_THREATS]
+    max_threats = env.SECURITY_MAX_ALERT_THREATS
+    if len(selected) >= max_threats:
+        return selected[:max_threats]
 
-    return [*selected, *high[: _MAX_ALERT_THREATS - len(selected)]]
+    return [*selected, *high[: max_threats - len(selected)]]
 
 
 def _enrich_threats(threats: list[dict[str, Any]], intel_items: list[dict[str, str]]) -> list[dict[str, Any]]:

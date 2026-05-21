@@ -89,6 +89,7 @@ async def run_security_digest() -> None:
         json.dumps(prompt_intel),
         monitored_packages=monitored_packages,
         global_context=env.LLM_GLOBAL_CONTEXT.strip(),
+        max_threats=env.SECURITY_MAX_ALERT_THREATS,
     )
 
     triage_response: SecurityTriageResponse | None = None
