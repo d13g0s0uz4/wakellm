@@ -29,6 +29,17 @@ class SecurityThreat(BaseModel):
     cve_id: Optional[str] = None
     fixed_version: Optional[str] = None
 
+    @field_validator("ecosystem")
+    @classmethod
+    def _normalize_ecosystem(cls, v: str) -> str:
+        _CANONICAL = {
+            "supply chain": "supply-chain",
+            "supply_chain": "supply-chain",
+            "pypi": "PyPI",
+            "pip": "PyPI",
+        }
+        return _CANONICAL.get(v.lower().strip(), v)
+
     @field_validator("source_url")
     @classmethod
     def _validate_url(cls, v: str) -> str:
