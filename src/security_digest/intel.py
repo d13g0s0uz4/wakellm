@@ -9,8 +9,8 @@ from src.security_digest.utils import (
     _normalize_optional_text,
 )
 
-_MAX_TRIAGE_INTEL_ITEMS = 120
-_MAX_ALERT_THREATS = 15
+_MAX_TRIAGE_INTEL_ITEMS = 40
+_MAX_ALERT_THREATS = 10
 
 
 def _normalize_intel(items: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -120,7 +120,7 @@ def _select_alert_threats(threats: list[dict[str, Any]]) -> list[dict[str, Any]]
 
     selected = [*top_priority, *critical]
     if len(selected) >= _MAX_ALERT_THREATS:
-        return selected
+        return selected[:_MAX_ALERT_THREATS]
 
     return [*selected, *high[: _MAX_ALERT_THREATS - len(selected)]]
 

@@ -19,7 +19,8 @@ Threat level rubric:
 1. Discard any vulnerabilities related to WordPress, Windows OS, or hardware.
 2. Isolate threats specifically related to: 'npm', 'PyPI', 'supply chain', 'typosquatting', or 'malicious packages'.
 3. For the relevant threats, assign a Threat Level using the rubric above.
-4. Output strictly as JSON:
+4. Return at most 10 threats, prioritising CRITICAL over HIGH over MEDIUM.
+5. Output strictly as JSON:
 {{
   "threats": [
     {{

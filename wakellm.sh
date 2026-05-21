@@ -235,7 +235,7 @@ echo ""
 echo "▶ Checking GCP Secret Manager secrets..."
 MISSING_SECRETS=()
 
-for secret in gemini-api-key github-token; do
+for secret in GEMINI_API_KEY GITHUB_TOKEN; do
   if ! gcloud secrets describe "$secret" --project="$PROJECT" >/dev/null 2>&1; then
     MISSING_SECRETS+=("$secret")
   fi
@@ -254,7 +254,7 @@ if [[ ${#MISSING_SECRETS[@]} -gt 0 ]]; then
 fi
 echo "✓ All required secrets are configured."
 
-REQUIRED_SECRETS="GEMINI_API_KEY=gemini-api-key:latest,GITHUB_TOKEN=github-token:latest"
+REQUIRED_SECRETS="GEMINI_API_KEY=GEMINI_API_KEY:latest,GITHUB_TOKEN=GITHUB_TOKEN:latest"
 
 OPTIONAL_SECRETS=""
 for secret in SECURITY_MONITORED_PACKAGES LLM_GLOBAL_CONTEXT; do

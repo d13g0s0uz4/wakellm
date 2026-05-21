@@ -26,6 +26,12 @@ def _safe_iso_date(value: str | None) -> str:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return parsed.astimezone(timezone.utc).isoformat()
+    except Exception:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        parsed = parsedate_to_datetime(value)
+        return parsed.astimezone(timezone.utc).isoformat()
     except Exception as exc:
         _log.warning("Bad date value %r: %s", value, exc)
         return datetime.now(timezone.utc).isoformat()
