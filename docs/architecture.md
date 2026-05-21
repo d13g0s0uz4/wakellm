@@ -1,144 +1,170 @@
-# WakeLLM Architecture
+# Architecture
 
 ## Overview
 
-WakeLLM is a Python orchestrator that bridges a local always-on Linux machine (Raspberry Pi, home server, VPS, workstation, etc.) with an ephemeral cloud GPU pod on RunPod. It provisions the remote pod on demand, establishes a local SSH port-forwarding tunnel, monitors activity, and shuts the pod down automatically when it is no longer needed — preventing runaway billing.
-
----
-
-## Component Map
+`wakellm-security` is a stateless Cloud Run Job written in Python 3.12. It runs on demand or on a schedule, collects threat intelligence from five external sources, triages the results with Gemini, and writes a single JSON document to stdout. There is no database, no persistent state, and no inbound HTTP surface.
 
 ```
-                         +-----------------------+
-  HTTP client  --------> | Flask API             |  POST /wake, GET /status
-  (local only)           | wakellm/api.py        |
-                         +-----------+-----------+
-                                     |
-                         +-----------v-----------+
-                         | WakeLLM (orchestrator)|
-                         | wakellm/orchestrator.py|
-                         +--+------+------+------+
-                            |      |      |
-            +---------------+  +---+  +--+---------------+
-            |                  |      |                   |
-  +---------v-------+  +-------v--+  +---v-----------+  +-v-----------+
-  | RunPodClient    |  | start_   |  | run_tunnel_   |  | run_idle_   |
-  | wakellm/        |  | tunnel() |  | monitor()     |  | monitor()   |
-  | runpod.py       |  | tunnel.py|  | monitors.py   |  | monitors.py |
-  | (GraphQL API)   |  | (ssh     |  | (daemon       |  | (daemon     |
-  +-----------------+  |  Popen)  |  |  thread)      |  |  thread)    |
-                        +----------+  +---------------+  +-------------+
-                             |                |                |
-                             v                v                v
-                        RunPod pod      stop_event        stop_event
-                        SSH port        set on             set on
-                        (native ssh)    tunnel death       idle/timeout
+┌─────────────────────────────────────────────────────────────────┐
+│                        Cloud Run Job                            │
+│                                                                 │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐      │
+│  │ GitHub   │   │ Reddit   │   │   RSS    │   │   NVD    │      │
+│  │Advisory  │   │ JSON API │   │  Feeds   │   │  API v2  │      │
+│  └────┬─────┘   └────┬─────┘   └────┬─────┘   └────┬─────┘      │
+│       │              │              │              │            │
+│       └──────────────┴──────────────┴──────────────┘            │
+│                       asyncio.gather()                          │
+│                             │                                   │
+│                    ┌────────▼────────┐                          │
+│                    │ CISA KEV fetch  │                          │
+│                    └────────┬────────┘                          │
+│                             │                                   │
+│                   ┌─────────▼──────────┐                        │
+│                   │  _normalize_intel  │  dedup: url|title      │
+│                   │  (CVE-based dedup) │  then CVE-id pass      │
+│                   └─────────┬──────────┘                        │
+│                             │                                   │
+│                  ┌──────────▼───────────┐                       │
+│                  │ _prioritize_intel    │  CISA>NVD>GitHub>RSS  │
+│                  │ (top 120 items)      │  + ecosystem + CVE    │
+│                  └──────────┬───────────┘                       │
+│                             │                                   │
+│                    ┌────────▼────────┐                          │
+│                    │  Gemini triage  │  structured output       │
+│                    │  (temp 0.1)     │  SecurityTriageResponse  │
+│                    └────────┬────────┘                          │
+│                             │ (fallback: CVE deterministic)     │
+│                  ┌──────────▼───────────┐                       │
+│                  │  URL hallucination   │  drop unrecoverable   │
+│                  │  guard               │  recover via CVE ID   │
+│                  └──────────┬───────────┘                       │
+│                             │                                   │
+│                   ┌─────────▼──────────┐                        │
+│                   │  _enrich_threats   │  backfill cve_id,      │
+│                   │                    │  fixed_version, status │
+│                   └─────────┬──────────┘                        │
+│                             │                                   │
+│               ┌─────────────▼────────────┐                      │
+│               │ _apply_monitored_priority│  escalate matched    │
+│               │                          │  packages → CRITICAL │
+│               └─────────────┬────────────┘                      │
+│                             │                                   │
+│                    ┌────────▼────────┐                          │
+│                    │   JSON stdout   │                          │
+│                    └─────────────────┘                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
----
+## Data flow
 
-## Module Responsibilities
+### 1. Parallel fetch
 
-| Module | Responsibility |
+All five fetch coroutines run concurrently via `asyncio.gather()`. Each returns `list[dict[str, str]]` with a uniform schema:
+
+| Field | Description |
 |---|---|
-| `wakellm/config.py` | Load and validate configuration from YAML or environment variables. Expose typed accessor helpers. |
-| `wakellm/runpod.py` | All RunPod GraphQL API calls: resume pod, stop pod, poll pod status. |
-| `wakellm/tunnel.py` | Launch and return the native `ssh -N -L` subprocess. |
-| `wakellm/monitors.py` | Two daemon-thread targets: tunnel health monitor and Ollama idle monitor. |
-| `wakellm/api.py` | Build the Flask application and start it in a daemon thread. |
-| `wakellm/orchestrator.py` | `WakeLLM` class: owns the state machine, coordinates the lifecycle, holds references to all running components. |
-| `wakellm/__main__.py` | CLI entry point (`start`, `stop`, `status`). |
-| `wakellm.py` | Root-level shim for backward compatibility with `python wakellm.py start`. |
+| `title` | Advisory or post title |
+| `source` | `"GitHub Advisory"` / `"NIST NVD"` / `"CISA KEV"` / `"Reddit r/…"` / feed URL |
+| `url` | Canonical URL — validated to be the only source of truth for threats |
+| `snippet` | Description body, truncated to 500 chars |
+| `ecosystem_hint` | `"npm"` / `"PyPI"` / `"supply-chain"` / `"unknown"` |
+| `published_at` | UTC ISO-8601 string |
+| `cve_id` | Normalised `CVE-YYYY-NNNN` or `""` |
+| `fixed_version` | Patched version string or `""` |
 
----
+### 2. Normalisation and deduplication
 
-## State Machine
+`_normalize_intel()` performs two deduplication passes:
 
-The orchestrator enforces a strict linear state machine guarded by a `threading.Lock`.
+1. **URL + title pass** — primary key `{url}|{title.lower()}`. Drops items with missing URL or title.
+2. **CVE-ID pass** — for items that share a `cve_id`, only the highest-authority source is kept: CISA KEV (0) > NIST NVD (1) > GitHub Advisory (2) > all others (99).
+
+### 3. Prioritisation
+
+`_prioritize_intel_for_triage()` sorts by `(source_rank, ecosystem+cve_priority, recency)` and truncates to the top 120 items sent to Gemini. This keeps the prompt focused on actionable supply-chain threats and avoids token bloat.
+
+### 4. LLM triage
+
+A slim payload `{title, url, body, cve_id}` per item is sent to Gemini with `response_schema=SecurityTriageResponse` for native structured output. Temperature is fixed at 0.1. The prompt instructs the model to:
+- Discard Windows, WordPress, and hardware CVEs
+- Focus on npm, PyPI, and supply-chain threats
+- Return CRITICAL / HIGH / MEDIUM threat levels per rubric
+- Never construct or guess URLs
+
+If the Gemini call fails, `_fallback_threats_from_intel()` extracts CVE-based threats deterministically from the prioritised intel without LLM involvement.
+
+### 5. Hallucination guard
+
+Every `source_url` in the LLM response is checked against `intel_url_set` (the set of URLs actually fetched). If a URL is not present:
+- Recovery is attempted via `intel_by_cve` (CVE ID → canonical URL lookup).
+- If recovery succeeds, the hallucinated URL is silently replaced.
+- If recovery fails, the threat is **dropped entirely** and logged at WARNING level.
+
+### 6. Enrichment and monitored-package escalation
+
+`_enrich_threats()` backfills `cve_id`, `fixed_version`, `dedup_key`, and `status: "OPEN"` from original intel items matched by URL.
+
+`_apply_monitored_priority()` checks each threat's text against the `SECURITY_MONITORED_PACKAGES` list. Matches are escalated to `threat_level: "CRITICAL"` and tagged `priority_tag: "TOP_PRIORITY"`.
+
+### 7. Output
+
+```json
+{
+  "run_at": "2026-05-21T10:00:00+00:00",
+  "threats": [
+    {
+      "title": "Malicious package 'lodash-utils' on npm",
+      "ecosystem": "npm",
+      "threat_level": "CRITICAL",
+      "summary": "...",
+      "source_url": "https://github.com/advisories/GHSA-...",
+      "action_required": "...",
+      "cve_id": "CVE-2024-1234",
+      "fixed_version": "4.17.22",
+      "dedup_key": "CVE-2024-1234",
+      "status": "OPEN",
+      "matched_package": "lodash-utils",
+      "priority_tag": "TOP_PRIORITY"
+    }
+  ]
+}
+```
+
+`matched_package` and `priority_tag` are omitted when empty (i.e. no monitored-package match).
+
+## Package layout
 
 ```
-  stopped  -->  starting  -->  running  -->  stopping  -->  stopped
+src/
+├── __init__.py
+├── __main__.py             # CLI entry point, logging setup
+├── gemini.py               # GeminiService wrapper (generate_text, generate_json)
+├── config/
+│   ├── env.py              # AppEnv(BaseSettings) — all env vars
+│   └── sources_config.py   # SourcesConfig — typed YAML/JSON loader
+├── security_digest/
+│   ├── __init__.py         # Re-exports public API
+│   ├── utils.py            # CVE regex, ecosystem inference, date/text normalisation
+│   ├── monitored.py        # Monitored-package parsing, matching, escalation
+│   ├── fetchers.py         # 5 async HTTP fetch functions
+│   ├── intel.py            # Dedup, prioritisation, fallback, enrichment
+│   ├── prompts.py          # get_security_triage_prompt()
+│   └── pipeline.py         # run_security_digest() — main orchestration
+└── utils/
+    ├── llm_schemas.py      # SecurityThreat, SecurityTriageResponse (Pydantic v2)
+    └── async_utils.py      # sleep() helper
 ```
 
-| State | Meaning |
+## Key design decisions
+
+| Decision | Rationale |
 |---|---|
-| `stopped` | Initial state. No pod running, no tunnel. |
-| `starting` | Pod resume sent; waiting for RUNNING + SSH boot. |
-| `running` | Tunnel active; monitor threads alive. |
-| `stopping` | Shutdown initiated; tearing down resources. |
-
-Transitions are only permitted in the forward direction. Calling `start_lifecycle()` when the state is `starting` or `running` is a no-op (returns `False`). Calling `shutdown()` when the state is already `stopping` is a no-op (idempotent).
-
----
-
-## Lifecycle Flow
-
-```
-start_lifecycle()
-  |
-  +-- set state STARTING
-  |
-  +-- RunPodClient.start_pod()
-  |     +-- podResume GraphQL mutation
-  |     +-- poll get_pod_info() until desiredStatus == RUNNING and runtime != null
-  |     +-- abort to stop_pod() + sys.exit(1) if pod_start_timeout_minutes exceeded
-  |
-  +-- sleep(ssh_boot_wait_seconds)    # let sshd fully start inside the container
-  |
-  +-- start_tunnel(config, pod_info)  # returns Popen; blocks until ssh exits or killed
-  |
-  +-- set state RUNNING
-  |
-  +-- spawn tunnel-monitor thread     # polls proc.poll() every 5 s
-  +-- spawn idle-monitor thread       # polls Ollama /api/ps every ollama_poll_interval_seconds
-  |
-  return True
-```
-
-Either monitor calls `shutdown()` when its condition is met, which:
-1. Sets `stop_event` (unblocks both monitor loops immediately)
-2. Terminates the SSH tunnel subprocess (SIGTERM, SIGKILL after 5 s)
-3. Calls `RunPodClient.stop_pod()` to halt billing
-4. Sets state to `STOPPED`
-
----
-
-## Threading Model
-
-| Thread | Type | Name | Lifetime |
-|---|---|---|---|
-| Main thread | — | — | Entire process |
-| Flask API server | daemon | `api-server` | Until process exits |
-| Tunnel monitor | daemon | `tunnel-monitor` | RUNNING until shutdown |
-| Idle monitor | daemon | `idle-monitor` | RUNNING until shutdown |
-| Lifecycle (via `/wake`) | daemon | `lifecycle` | One shot |
-
-All daemon threads are automatically killed when the main thread exits.
-
-Communication between threads uses two primitives:
-- `threading.Event` (`stop_event`): set by `shutdown()` to unblock `stop_event.wait(timeout=N)` calls inside both monitors simultaneously.
-- `threading.Lock` (`_state_lock`): protects all reads and writes to `_state`.
-
----
-
-## Port Forwarding
-
-Each entry in the `ports` config list produces one `-L` flag on the `ssh` command:
-
-```
--L <local_port>:localhost:<remote_port>
-```
-
-This makes the remote pod's services reachable on `localhost` of the local machine. No external network exposure occurs — the tunnel binds to `localhost` on the remote side.
-
----
-
-## Fail-Safe Billing Protection
-
-Multiple layers guard against a pod running unattended and accruing unexpected charges:
-
-1. **Pod start timeout**: if the pod does not reach RUNNING within `startup.pod_start_timeout_minutes`, it is stopped and the process exits with code 1.
-2. **Tunnel crash detection**: if the SSH subprocess exits unexpectedly, `shutdown()` is called immediately.
-3. **Idle auto-kill**: if Ollama reports no loaded models for `autokill.idle_timeout_minutes`, `shutdown()` is called.
-4. **Hard uptime cap**: regardless of activity, `shutdown()` is called after `autokill.hard_timeout_minutes` of total runtime.
-5. **`stop_pod()` is always called**: even on exceptions during `start_lifecycle()`, `shutdown()` is invoked in the `except` block.
+| JSON to stdout | Composable with any downstream processor; Cloud Run captures stdout logs |
+| Structured output via `response_schema` | More reliable than parsing markdown-wrapped JSON; avoids post-processing |
+| Deterministic CVE fallback | Ensures a non-empty report even when Gemini is unavailable or quota-exhausted |
+| Hallucinated URL dropping | Fabricated URLs must never appear in security output; safe fail over silent pass-through |
+| Two-pass CVE dedup | Same CVE from NVD + GitHub would otherwise double triage cost and confuse the LLM |
+| Stateless job | No database means zero operational overhead; idempotent re-runs are safe |
+| Alpine base image | Minimal attack surface; `ca-certificates` added explicitly for TLS |
+| Non-root container user | Least-privilege; defence-in-depth for container escape scenarios |

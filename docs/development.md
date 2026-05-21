@@ -1,126 +1,133 @@
-# WakeLLM Development Guide
+# Development
 
----
+## Prerequisites
 
-## Project Structure
+- Python 3.12+
+- A `.env` file with at least `GEMINI_API_KEY` and `GITHUB_TOKEN`
 
-```
-wakellm/
-    config.py        — configuration loading from environment variables
-    runpod.py        — RunPod GraphQL API client
-    tunnel.py        — SSH tunnel subprocess management
-    monitors.py      — daemon thread targets (tunnel + idle)
-    api.py           — Flask HTTP API
-    orchestrator.py  — WakeLLM class: state machine and lifecycle
-    __main__.py      — CLI entry point
-    __init__.py      — public package export (WakeLLM class)
-wakellm.py           — root shim (backward compatibility)
-tests/
-    conftest.py      — shared pytest fixtures
-    test_config.py
-    test_runpod.py
-    test_tunnel.py
-    test_monitors.py
-    test_api.py
-    test_orchestrator.py
-Dockerfile           — container image definition
-entrypoint.sh        — container startup gate (tests + Trivy + exec)
-requirements.txt     — all dependencies (runtime and test)
-env/
-    config.env.example  — environment variable template (commit this)
-    config.env          — your local secrets (gitignored)
-```
-
----
-
-## Running Tests
-
-All tests run inside Docker — no local Python environment needed.
+## Setup
 
 ```bash
-# Run the full pipeline (build + tests + Trivy + start)
-./start-wake.sh
+# Clone and enter the repo
+git clone https://github.com/yourorg/wakellm-security
+cd wakellm-security
 
-# Run tests only (no secrets needed; no WakeLLM start)
-docker build -t wakellm:dev .
-docker run --rm --entrypoint python3 wakellm:dev -m pytest tests/ -v --tb=short
+# Create a virtual environment
+python -m venv .venv
+.venv\Scripts\activate      # Windows
+# source .venv/bin/activate  # macOS / Linux
+
+# Install runtime + dev dependencies
+pip install -r requirements-dev.txt
+
+# Copy and fill in the env file
+cp .env.example .env
+# Edit .env: set GEMINI_API_KEY and GITHUB_TOKEN at minimum
 ```
 
-To run a specific test file or class:
+## Running locally
 
 ```bash
-docker run --rm --entrypoint python3 wakellm:dev -m pytest tests/test_config.py -v
-docker run --rm --entrypoint python3 wakellm:dev -m pytest tests/test_orchestrator.py::TestShutdown -v
+# Run the full pipeline — JSON to stdout, diagnostics to stderr
+python -m src securityDigest
+
+# Show CLI help
+python -m src --help
 ```
 
----
+To point at a custom sources file:
 
-## Test Structure
-
-### Fixtures (`tests/conftest.py`)
-
-Two shared fixtures are defined; all other tests should use these rather than building their own config dicts:
-
-| Fixture | Type | Description |
-|---|---|---|
-| `minimal_config` | `dict` | A complete, valid config dict. No I/O. Suitable for passing directly to any function requiring a config. |
-| `mock_pod_info` | `dict` | A realistic RunPod API response dict for a running pod with SSH port `43210` on IP `192.0.2.10`. |
-
-### Test Modules
-
-| File | Module Under Test | Key Scenarios |
-|---|---|---|
-| `test_config.py` | `wakellm/config.py` | YAML loading, env-var loading, `WAKELLM_RUNPOD_API_KEY` priority, SSH key file write + `0600` permissions, validation errors, pod ID regex, `cfg()` accessor, `ollama_local_port()` |
-| `test_runpod.py` | `wakellm/runpod.py` | GraphQL success and HTTP error, pod start happy path, timeout → stop + exit, polling retry until RUNNING, stop pod, get pod info |
-| `test_tunnel.py` | `wakellm/tunnel.py` | SSH command structure, `-N` flag, `StrictHostKeyChecking=no`, port forwarding `-L` flags, key path expansion, missing SSH port raises `RuntimeError` |
-| `test_monitors.py` | `wakellm/monitors.py` | Tunnel death triggers `shutdown_cb`, `stop_event` exits without callback, `None` proc is safe, hard timeout, idle timeout, model-loaded resets idle clock, `ConnectionError` does not start idle clock, no Ollama port prints warning |
-| `test_api.py` | `wakellm/api.py` | `/wake` with all four states, `/status` response schema, daemon thread spawned for lifecycle |
-| `test_orchestrator.py` | `wakellm/orchestrator.py` | Initial state, config/pod-id validation called, state transition to RUNNING, idempotency (starting/running), exception → shutdown, monitor threads started, pod stop called on shutdown, tunnel terminated, kill on SIGTERM timeout, delegate methods |
-
----
-
-## Writing New Tests
-
-### Test isolation
-
-- Mock all I/O at the boundary: `requests.post`, `subprocess.Popen`, `time.sleep`, `time.monotonic`.
-- Never make real network requests or spawn real subprocesses.
-- Use `monkeypatch.delenv("WAKELLM_RUNPOD_API_KEY", raising=False)` in any test that expects env-loading to fail — the container environment may have these set.
-
-### Working with threading in tests
-
-Monitor threads block on `stop_event.wait(timeout=N)`. Replace the wait to avoid blocking:
-
-```python
-stop_event.wait = lambda timeout=None: False  # never sets, immediate return
+```bash
+SOURCES_CONFIG=config/sources-minimal.yaml python -m src securityDigest
 ```
 
-Set the stop event before the test ends to ensure the thread exits:
+To test monitored-package escalation:
 
-```python
-stop_event.set()
-thread.join(timeout=2)
+```bash
+SECURITY_MONITORED_PACKAGES="react,lodash,express" python -m src securityDigest
 ```
 
-### Checking sys.exit()
+## Running tests
 
-Functions that call `sys.exit(1)` on bad input should be tested with `pytest.raises(SystemExit)`:
-
-```python
-def test_bad_pod_id_exits(monkeypatch):
-    monkeypatch.delenv("WAKELLM_RUNPOD_API_KEY", raising=False)
-    with pytest.raises(SystemExit) as exc_info:
-        validate_pod_id("bad!")
-    assert exc_info.value.code == 1
+```bash
+pytest tests/python/ -v
 ```
 
----
+### Test layout
 
-## Design Constraints
+| File | What it covers |
+|---|---|
+| `tests/python/test_security_digest.py` | `_parse_monitored_packages`, `_find_monitored_package_match`, `_apply_monitored_priority`, `_build_dedup_key`, `_normalize_threat_level`, `_prioritize_intel_for_triage`, `_fallback_threats_from_intel`, `_select_alert_threats` |
+| `tests/python/test_fetchers.py` | All 5 fetch functions + `_infer_ecosystem_from_nvd` — mocked with `unittest.mock` |
+| `tests/python/test_gemini_json_parsing.py` | `_extract_json_payload` edge cases |
+| `tests/python/test_gemini_service_fallback.py` | Retry logic, quota errors, search-mode fallback |
 
-These constraints are defined in `PROJECT_SCOPE.md` and must be respected:
+Tests require no network access — all HTTP calls are mocked. The test files set `GEMINI_API_KEY` and `GITHUB_TOKEN` via `os.environ.setdefault` before importing project modules.
 
-- **No `paramiko` or `fabric`**: SSH tunnels must use the native `ssh` binary via `subprocess.Popen`.
-- **Minimal dependencies**: only add to `requirements.txt` when clearly necessary; prefer stdlib.
-- **No config.yaml in the image**: the container must be configured entirely through environment variables.
-- **Fail-safe billing protection**: any unhandled exception in the lifecycle must result in `stop_pod()` being called.
+### Running tests in Docker
+
+```bash
+docker build --target dev -t wakellm-security:dev .
+docker run --rm wakellm-security:dev pytest tests/python/ -v
+```
+
+## Project layout
+
+```
+.
+├── Dockerfile
+├── pyproject.toml
+├── requirements.txt
+├── requirements-dev.txt
+├── wakellm.sh              # Deploy / run management script
+├── .env.example
+├── config/
+│   └── sources.yaml        # Default feed configuration
+├── docs/                   # This documentation
+├── src/
+│   ├── __init__.py
+│   ├── __main__.py         # Entry point: python -m src securityDigest
+│   ├── gemini.py           # GeminiService — generate_text / generate_json
+│   ├── config/
+│   │   ├── env.py          # AppEnv (pydantic-settings)
+│   │   └── sources_config.py
+│   ├── security_digest/
+│   │   ├── __init__.py     # Re-exports for test compatibility
+│   │   ├── utils.py        # CVE regex, text normalisation helpers
+│   │   ├── monitored.py    # Monitored-package matching + escalation
+│   │   ├── fetchers.py     # 5 async HTTP fetchers
+│   │   ├── intel.py        # Dedup, prioritisation, fallback, enrichment
+│   │   ├── prompts.py      # LLM prompt builder
+│   │   └── pipeline.py     # run_security_digest() orchestration
+│   └── utils/
+│       ├── llm_schemas.py  # Pydantic v2 models for LLM responses
+│       └── async_utils.py  # sleep() helper
+└── tests/
+    └── python/
+        ├── __init__.py
+        ├── test_security_digest.py
+        ├── test_fetchers.py
+        ├── test_gemini_json_parsing.py
+        └── test_gemini_service_fallback.py
+```
+
+## Logging
+
+All diagnostic output goes to **stderr** as structured JSON, consumed by Cloud Run's logging agent. In local development the same JSON lines are printed to your terminal. The format is:
+
+```json
+{"severity": "INFO", "message": "[fetch] github=12 reddit=3 rss=8 nvd=47 cisa=5", "logger": "src.security_digest.pipeline"}
+```
+
+Severity levels used:
+- `INFO` — normal pipeline milestones (start, fetch counts, fallback notice)
+- `WARNING` — recoverable issues (date parse failure, Reddit 403, dropped hallucinated URL)
+- `ERROR` — unrecoverable fetch failures (NVD/CISA/GitHub HTTP errors, Gemini quota exhausted)
+
+## Adding a new feed source
+
+1. Add the fetcher coroutine to `src/security_digest/fetchers.py`. Return `list[dict[str, str]]` matching the standard schema (`title`, `source`, `url`, `snippet`, `ecosystem_hint`, `published_at`, `cve_id`, `fixed_version`).
+2. Add a config dataclass to `src/config/sources_config.py` and wire it up in `_from_dict()`.
+3. Add the corresponding section to `config/sources.yaml`.
+4. Add the fetch task to `pipeline.py`'s `fetch_tasks` list and destructure the result.
+5. Add tests in `tests/python/test_fetchers.py` with mocked httpx responses.

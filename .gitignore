@@ -1,5 +1,10 @@
-PROJECT_SCOPE.md
-
-# Local secrets — do not commit
-env/config.env
+node_modules/
+dist/
 .env
+.env.*
+!.env.example
+coverage/
+*.log
+*.pyc
+__pycache__/
+.planning/

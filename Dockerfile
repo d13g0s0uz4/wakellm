@@ -1,63 +1,38 @@
-# ============================================================
-# WakeLLM — container image
-# Base: python:3.12-slim (Debian slim)
-#
-# The safety gate (pytest + Trivy) is run by start-wake.sh on the host
-# before starting the container. The entrypoint inside the container is a
-# thin dispatcher that calls python3 -m wakellm start|stop|status.
-# ============================================================
-FROM python:3.12-slim
+# ── Runtime: pure Python ─────────────────────────────────────────────────────
+FROM python:3.12-alpine AS runtime
 
-# ---------------------------------------------------------------------------
-# System dependencies
-# ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-client \
-    curl \
-    ca-certificates \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
+# Disable Python output buffering so Cloud Run logs appear in real-time
+ENV PYTHONUNBUFFERED=1
 
-# ---------------------------------------------------------------------------
-# Install Trivy via the official Aqua Security apt repository.
-# This always resolves the latest stable release without pinning a version.
-# ---------------------------------------------------------------------------
-RUN set -eux; \
-    curl -sfL https://aquasecurity.github.io/trivy-repo/deb/public.key \
-        | gpg --dearmor > /usr/share/keyrings/trivy.gpg; \
-    echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
-        > /etc/apt/sources.list.d/trivy.list; \
-    apt-get update && apt-get install -y --no-install-recommends trivy; \
-    rm -rf /var/lib/apt/lists/*; \
-    trivy --version
+# Create a non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# ---------------------------------------------------------------------------
-# Application
-# ---------------------------------------------------------------------------
 WORKDIR /app
 
-# Install Python dependencies first (layer-cached unless requirements change)
+# Install system packages for SSL/TLS certificate verification
+RUN apk add --no-cache ca-certificates
+
+# Install Python dependencies
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application package and tests
-COPY wakellm/ ./wakellm/
-COPY wakellm.py ./
-COPY tests/ ./tests/
+# Copy Python source and default sources config
+COPY --chown=appuser:appgroup src/ ./src/
+COPY --chown=appuser:appgroup config/ ./config/
 
-# Trivy DB cache directory (pre-warm at build time for faster startups)
-RUN trivy --cache-dir /var/cache/trivy image --download-db-only --no-progress 2>/dev/null || true
+USER appuser
 
-# Entrypoint
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Cloud Run Jobs pass the command via the ARGS override in the job definition.
+ENTRYPOINT ["python", "-m", "src"]
 
-# ---------------------------------------------------------------------------
-# Runtime
-# No config.yaml in the image — provide via environment variables:
-#   WAKELLM_RUNPOD_API_KEY, WAKELLM_RUNPOD_POD_ID,
-#   WAKELLM_SSH_KEY or WAKELLM_SSH_KEY_PATH (bind-mount),
-#   WAKELLM_PORTS  (comma-separated, e.g. "11434:11434,8080:8080")
-# ---------------------------------------------------------------------------
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["start"]
+# ── Dev/test stage (adds pytest + test sources) ───────────────────────────────
+FROM runtime AS dev
+
+USER root
+COPY pyproject.toml ./
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+COPY --chown=appuser:appgroup tests/ ./tests/
+
+USER appuser

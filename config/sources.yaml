@@ -1,0 +1,37 @@
+# config/sources.yaml — Threat intel feed configuration for wakellm-security
+#
+# Edit this file to control which sources are fetched each run.
+# All sections are optional; disable any source by setting enabled: false
+# or removing/emptying its block.
+
+github_advisories:
+  enabled: true
+  # Ecosystems to query via api.github.com/advisories
+  ecosystems:
+    - npm
+    - pip
+  per_page: 50
+
+reddit:
+  enabled: true
+  # Subreddits to scan (fetches /r/<name>/new.json for supply-chain keywords)
+  subreddits:
+    - netsec
+    - cybersecurity
+
+rss_feeds:
+  enabled: true
+  feeds:
+    - url: https://phylum.io/blog/rss/
+    - url: https://snyk.io/blog/feed/
+    - url: https://www.bleepingcomputer.com/feed/
+
+nvd:
+  enabled: true
+  # NIST National Vulnerability Database CVE 2.0 API
+  api_url: https://services.nvd.nist.gov/rest/json/cves/2.0
+
+cisa_kev:
+  enabled: true
+  # CISA Known Exploited Vulnerabilities catalog
+  feed_url: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json

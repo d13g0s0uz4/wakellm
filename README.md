@@ -1,72 +1,36 @@
-# WakeLLM
+# wakellm-security
 
-WakeLLM bridges a local always-on Linux machine with an ephemeral cloud GPU pod on RunPod. It provisions the remote pod on demand, establishes a local SSH port-forwarding tunnel, and shuts the pod down automatically when it is no longer in use — keeping compute costs proportional to actual usage.
+Cloud Run Job that collects supply-chain threat intelligence, triages it with Gemini, and emits a JSON report to stdout.
 
-It runs on any Linux host with Docker: a Raspberry Pi, a home server, a VPS, or a workstation. The local machine acts as the always-on control plane; the GPU compute lives entirely in the cloud.
+**Sources:** GitHub Advisory Database · Reddit (r/netsec, r/cybersecurity) · RSS feeds (Phylum, Snyk, BleepingComputer) · NIST NVD · CISA KEV  
+**Output:** JSON array of prioritised threats — CRITICAL / HIGH / MEDIUM, enriched with CVE IDs, fixed versions, and monitored-package escalation.
 
----
-
-## How It Works
-
-1. A local cron job, CLI command, or HTTP request triggers WakeLLM.
-2. WakeLLM sends a resume mutation to the RunPod API.
-3. Once the pod reports ready, WakeLLM opens an SSH tunnel, forwarding configured remote ports to `localhost`.
-4. Local services connect to the remote Ollama or Open WebUI as if they were running natively.
-5. The idle monitor detects inactivity and tears down the pod automatically.
-
----
-
-## Key Features
-
-- **Ephemeral compute, persistent local state.** Agent memory, databases, and credentials stay on the local machine. The cloud is used only for computation.
-- **SSH port forwarding.** Uses native OpenSSH to bind remote ports (Ollama, Open WebUI, etc.) to `localhost` — no extra tooling required.
-- **Idle auto-kill.** Polls Ollama's `/api/ps` endpoint. Shuts down when no model has been loaded for a configurable idle period.
-- **Hard uptime cap.** Unconditional shutdown after a configurable total runtime, regardless of activity.
-- **Billing fail-safes.** Pod start timeout, tunnel crash detection, and exception-triggered shutdown all call `podStop` before exiting.
-- **Local HTTP API.** `POST /wake` and `GET /status` endpoints for programmatic control and status polling.
-- **Container-first.** Runs as a Docker container. Startup gate runs unit tests and Trivy security scans before launching the application.
-
----
-
-## Quick Start
+## Quick start
 
 ```bash
-# Copy and fill in your config
-cp env/config.env.example env/config.env
-# edit env/config.env
-
-chmod +x start-wake.sh
-./start-wake.sh
+cp .env.example .env
+# Set GEMINI_API_KEY and GITHUB_TOKEN
+python -m src securityDigest
 ```
 
-`start-wake.sh` builds the image, runs unit tests and Trivy security scans in
-ephemeral containers, then starts WakeLLM. All checks must pass before the
-application starts.
-
----
-
-## Prerequisites
-
-- Docker
-- A RunPod account and API key
-- A RunPod pod (not serverless) with `sshd` running and an SSH key registered
-- An SSH private key corresponding to the key registered in the pod
-
----
+JSON goes to **stdout**. Diagnostics go to **stderr** (structured JSON for Cloud Run).
 
 ## Documentation
 
-| Document | Description |
+| | |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | Component map, state machine, lifecycle flow, threading model |
-| [docs/configuration.md](docs/configuration.md) | All configuration keys — environment variable reference |
-| [docs/api.md](docs/api.md) | HTTP API reference: POST /wake, GET /status |
-| [docs/deployment.md](docs/deployment.md) | Docker build and run instructions, expected startup output |
-| [docs/development.md](docs/development.md) | Test structure, how to add tests, design constraints |
-| [docs/openclaw.md](docs/openclaw.md) | Integrating OpenClaw (chatbot + scheduled digest use cases) |
+| [Architecture](docs/architecture.md) | System design, data flow, package layout |
+| [Configuration](docs/configuration.md) | Env vars, `sources.yaml` reference, GCP secrets |
+| [Deployment](docs/deployment.md) | Cloud Run deployment via `wakellm.sh` |
+| [Development](docs/development.md) | Local setup, running tests |
+| [Modules](docs/modules.md) | Package and function reference |
 
----
+## Requirements
+
+- Python 3.12+
+- `GEMINI_API_KEY` — [Google AI Studio](https://aistudio.google.com/)
+- `GITHUB_TOKEN` — GitHub personal access token (public repo read scope)
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT

@@ -1,171 +1,185 @@
-# WakeLLM Deployment
-
-WakeLLM is designed to run as a Docker container on any Linux host (Raspberry Pi,
-home server, VPS, workstation, etc.). The normal entry point is `start-wake.sh`,
-which runs the full pipeline on the host:
-
-1. Build the container image
-2. Run pytest inside an ephemeral container from the just-built image
-3. Run Trivy filesystem scan (Python packages) inside a second ephemeral container
-4. Run Trivy rootfs scan (OS packages) inside a third ephemeral container
-5. Start WakeLLM if all checks pass
-
-All three gate steps must pass or the script aborts before starting WakeLLM.
-
----
+# Deployment
 
 ## Prerequisites
 
-- Any Linux host with Docker installed (Raspberry Pi 4/5, home server, VPS, workstation, etc.)
-- RunPod account with an API key
-- A RunPod pod (not a serverless endpoint) that has `sshd` running and an SSH key configured
-- An SSH private key corresponding to the key registered in RunPod
+- `gcloud` CLI authenticated (`gcloud auth login`, `gcloud auth application-default login`)
+- `.env` file populated from `.env.example`
+- GCP APIs enabled (one-time, see below)
+- `trivy` installed — https://aquasecurity.github.io/trivy/latest/getting-started/installation/ (or Docker as fallback)
+
+## One-time GCP setup
+
+### Enable APIs
+
+```bash
+gcloud services enable \
+  cloudbuild.googleapis.com \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  --project=YOUR_PROJECT
+```
+
+### Create Artifact Registry repository
+
+```bash
+gcloud artifacts repositories create wakellm-security \
+  --repository-format=docker \
+  --location=europe-west1 \
+  --project=YOUR_PROJECT
+```
+
+### Create service account
+
+```bash
+gcloud iam service-accounts create wakellm-security-runner \
+  --display-name="wakellm-security Cloud Run runner" \
+  --project=YOUR_PROJECT
+
+# Allow it to read secrets
+gcloud projects add-iam-policy-binding YOUR_PROJECT \
+  --member="serviceAccount:wakellm-security-runner@YOUR_PROJECT.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+### Create required secrets
+
+```bash
+echo -n "your-gemini-api-key" | gcloud secrets create gemini-api-key \
+  --project=YOUR_PROJECT --replication-policy=automatic --data-file=-
+
+echo -n "ghp_your_token" | gcloud secrets create github-token \
+  --project=YOUR_PROJECT --replication-policy=automatic --data-file=-
+```
+
+See [Configuration](configuration.md) for optional secrets.
 
 ---
 
-## Normal startup
+## .env setup
+
+Copy `.env.example` to `.env` and fill in at minimum:
 
 ```bash
-chmod +x start-wake.sh
-./start-wake.sh
+PROJECT=your-gcp-project-id
+REGION=europe-west1
+SERVICE_ACCOUNT=wakellm-security-runner@your-gcp-project-id.iam.gserviceaccount.com
+PROD_JOB_NAME=wakellm-security
+DEV_JOB_NAME=wakellm-security-dev
+REPO=wakellm-security
+IMAGE_NAME=wakellm-security
 ```
-
-`start-wake.sh` builds the image, runs the safety gate, then starts WakeLLM in
-a persistent container named `wakellm`. It reads `env/config.env` and uses
-`~/.ssh/id_ed25519` by default; override with environment variables:
-
-```bash
-WAKELLM_ENV_FILE=env/prod.env WAKELLM_SSH_KEY_FILE=/path/to/key ./start-wake.sh
-```
-
-## Build the image (manual)
-
-```bash
-docker build -t wakellm:latest .
-```
-
-The build installs Trivy from the official Aqua Security apt repository and pre-warms the Trivy vulnerability database so that gate scans are fast.
 
 ---
 
-## Run the Container
+## Deploying
 
-### Recommended: use an env file (no secrets in YAML)
-
-Copy the example file and fill in your values:
+### Dev deploy (creates job if missing)
 
 ```bash
-cp env/config.env.example env/config.env
+./wakellm.sh --deploy --dev
 ```
 
-Then run the container using `--env-file` and bind-mount your SSH key:
+This:
+1. Submits the image to **Cloud Build** (builds from the root `Dockerfile`)
+2. Tags the image `:latest` in Artifact Registry
+3. Runs a **Trivy** vulnerability scan — fails if unfixed HIGH/CRITICAL CVEs are found
+4. Checks that `gemini-api-key` and `github-token` secrets exist in Secret Manager
+5. **Creates** the dev Cloud Run Job if it doesn't exist; **updates** it if it does
+
+### Prod deploy (update-only)
 
 ```bash
-docker run --rm \
-  --env-file env/config.env \
-  -v ~/.ssh/id_ed25519:/run/secrets/id_ed25519:ro \
-  -p 8765:8765 \
-  wakellm:latest start
+./wakellm.sh --deploy --prod
 ```
 
-**Option B — pass key content as an environment variable:**
+Identical to dev deploy, but:
+- Targets `PROD_JOB_NAME` instead of `DEV_JOB_NAME`
+- **Refuses to auto-create** the job — the prod job must already exist (safety guard)
+
+### Skip Trivy scan
+
 ```bash
-docker run \
-  -e WAKELLM_SSH_KEY="$(cat ~/.ssh/id_ed25519)" \
-  ...
+SKIP_SCAN=1 ./wakellm.sh --deploy --dev
 ```
-The key is written to `/tmp/wakellm_ssh_key` with `0600` permissions inside the container.
+
+### Override image tag
+
+By default the tag is the short git SHA. Override with:
+
+```bash
+TAG=v1.2.3 ./wakellm.sh --deploy --prod
+```
 
 ---
 
-## Full docker run Example
+## Running a job
 
 ```bash
-docker run --rm \
-  --env-file env/config.env \
-  -v ~/.ssh/id_ed25519:/run/secrets/id_ed25519:ro \
-  -p 8765:8765 \
-  wakellm:latest start
+# Run prod job (default)
+./wakellm.sh --run
+
+# Run dev job
+./wakellm.sh --run --dev
 ```
 
-Port `8765` must be published with `-p 8765:8765` if you want to reach the HTTP API from outside the container. Note that `api.host` defaults to `127.0.0.1`, which means the API is only accessible from within the container's network namespace unless you also set `WAKELLM_API_HOST=0.0.0.0`.
+This executes `gcloud run jobs execute <JOB_NAME> --args='securityDigest' --wait`. The `--wait` flag blocks until the execution completes and streams logs.
+
+### Viewing output
+
+Cloud Run captures stdout as a single log entry. View it in the GCP Console → Cloud Run → Jobs → Executions, or via:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_job" AND textPayload!=""' \
+  --project=YOUR_PROJECT \
+  --limit=50 \
+  --format='value(textPayload)'
+```
+
+Diagnostics (severity, fetch counts, triage events) go to **stderr** in structured JSON format and appear in Cloud Logging with proper severity labels.
 
 ---
 
-## Optional Environment Variables
+## Cloud Scheduler (optional)
 
-See [configuration.md](configuration.md) for a full reference. Key optional variables:
+To run the job on a schedule:
 
-| Variable | Default | Description |
+```bash
+gcloud scheduler jobs create http wakellm-security-daily \
+  --schedule="0 8 * * *" \
+  --time-zone="Europe/London" \
+  --uri="https://run.googleapis.com/v1/namespaces/YOUR_PROJECT/jobs/wakellm-security:run" \
+  --message-body='{}' \
+  --oauth-service-account-email="wakellm-security-runner@YOUR_PROJECT.iam.gserviceaccount.com" \
+  --location=europe-west1 \
+  --project=YOUR_PROJECT
+```
+
+Grant the scheduler service account permission to invoke the job:
+
+```bash
+gcloud run jobs add-iam-policy-binding wakellm-security \
+  --region=europe-west1 \
+  --member="serviceAccount:wakellm-security-runner@YOUR_PROJECT.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --project=YOUR_PROJECT
+```
+
+---
+
+## Dockerfile
+
+The image is built in two stages:
+
+| Stage | Base | Content |
 |---|---|---|
-| `WAKELLM_STARTUP_TIMEOUT` | `5` | Minutes to wait for pod to reach RUNNING |
-| `WAKELLM_STARTUP_BOOT_WAIT` | `10` | Seconds to wait before SSH after pod is RUNNING |
-| `WAKELLM_AUTOKILL_IDLE` | `15` | Idle minutes before auto-shutdown |
-| `WAKELLM_AUTOKILL_HARD` | `120` | Hard uptime cap in minutes |
-| `WAKELLM_API_HOST` | `127.0.0.1` | Set to `0.0.0.0` to expose the API outside the container |
-| `WAKELLM_API_PORT` | `8765` | API port |
+| `runtime` | `python:3.12-alpine` | `src/`, `config/`, `requirements.txt`. Non-root user `appuser`. |
+| `dev` | `runtime` | Adds `requirements-dev.txt` and `tests/`. Used for running `pytest` inside the container. |
 
----
-
-## Expected output of ./start-wake.sh
-
-```
-[1/4] Building image wakellm:latest...
-... (docker build output) ...
-[PASS] Image built.
-
-[2/4] Running unit tests...
-... (pytest output) ...
-[PASS] All tests passed.
-
-[3/4] Trivy: scanning installed Python packages...
-... (Trivy table) ...
-[PASS] No CRITICAL vulnerabilities in installed packages.
-
-[4/4] Trivy: scanning full container filesystem...
-... (Trivy table) ...
-[PASS] No CRITICAL vulnerabilities in container OS.
-
-========================================
- All checks passed — starting WakeLLM
-========================================
-
-[INFO] API server listening on http://127.0.0.1:8765 (POST /wake, GET /status)
-[INFO] Waking up pod <pod-id>...
-```
-
-If any gate step fails, `start-wake.sh` exits with a non-zero status code and WakeLLM is not started.
-
----
-
-## CLI commands
-
-`start-wake.sh` accepts an action argument (default: `start`):
+Cloud Run uses the `runtime` stage. The `dev` stage is used in CI or local container testing:
 
 ```bash
-./start-wake.sh          # build + gate + start (default)
-./start-wake.sh start    # same as above
-./start-wake.sh stop     # stop the running pod (skips gate, no rebuild)
-./start-wake.sh status   # print pod status     (skips gate, no rebuild)
-```
-
-Or invoke `docker run` directly without the gate:
-
-```bash
-docker run --rm --env-file env/config.env \
-  -v ~/.ssh/id_ed25519:/run/secrets/id_ed25519:ro \
-  -p 8765:8765 \
-  wakellm:latest stop
-```
-
----
-
-## Persisting the Trivy Database
-
-The Trivy DB is pre-warmed at image build time to `/var/cache/trivy`. When the image is rebuilt, the DB is refreshed. For long-running deployments where the image is not rebuilt frequently, consider volume-mounting the cache to keep the DB current without rebuilding:
-
-```bash
-docker run \
-  -v trivy-cache:/var/cache/trivy \
-  ...
+docker build --target dev -t wakellm-security:dev .
+docker run --rm --env-file .env wakellm-security:dev pytest tests/python/ -v
 ```
