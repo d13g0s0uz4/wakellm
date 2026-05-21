@@ -2,7 +2,7 @@
 
 ## Overview
 
-`wakellm-security` is a stateless Cloud Run Job written in Python 3.12. It runs on demand or on a schedule, collects threat intelligence from five external sources, triages the results with Gemini, and writes a single JSON document to stdout. There is no database, no persistent state, and no inbound HTTP surface.
+`wakellm-security` is a stateless Cloud Run Job written in Python 3.12. It runs on demand or on a schedule, collects threat intelligence from five external sources, triages the results with Gemini, and writes a JSON document to stdout. With `--social`, a second Gemini call formats the same threats into Reddit, Twitter/X, and LinkedIn drafts, saved locally by `wakellm.sh`. There is no database, no persistent state, and no inbound HTTP surface.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -51,7 +51,19 @@
 │               └─────────────┬────────────┘                      │
 │                             │                                   │
 │                    ┌────────▼────────┐                          │
-│                    │   JSON stdout   │                          │
+│                    │   JSON stdout   │  {run_at, threats}       │
+│                    └────────┬────────┘                          │
+│                             │                                   │
+│                    (--social flag only)                         │
+│                             │                                   │
+│                    ┌────────▼────────┐                          │
+│                    │  Social drafts  │  temp 0.4, one call      │
+│                    │  Gemini call    │  SocialDrafts schema     │
+│                    └────────┬────────┘                          │
+│                             │                                   │
+│                    ┌────────▼────────┐                          │
+│                    │  JSON stdout    │  {run_at, threats,       │
+│                    │  (with drafts)  │   drafts:{reddit,x,li}}  │
 │                    └─────────────────┘                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -109,6 +121,8 @@ Every `source_url` in the LLM response is checked against `intel_url_set` (the s
 
 ### 7. Output
 
+When run without `--social`:
+
 ```json
 {
   "run_at": "2026-05-21T10:00:00+00:00",
@@ -133,6 +147,31 @@ Every `source_url` in the LLM response is checked against `intel_url_set` (the s
 
 `matched_package` and `priority_tag` are omitted when empty (i.e. no monitored-package match).
 
+### 8. Social drafts (optional)
+
+When `--social` is passed, a second Gemini call runs after the threats are finalised. It receives the output threats as input and produces one JSON object with drafts for three platforms:
+
+```json
+{
+  "run_at": "...",
+  "threats": [...],
+  "drafts": {
+    "reddit_title": "3 npm/supply-chain threats this week: CVE-2025-30066, LiteLLM SQLi, ...",
+    "reddit_body": "## Weekly Security Digest — May 22, 2026\n\n...",
+    "twitter_thread": [
+      "3 npm/supply-chain threats this week. Thread #infosec #supplychain",
+      "HIGH: CVE-2025-30066 — tj-actions/changed-files CI/CD GitHub Action compromise. Secrets exposed in workflow logs.",
+      "Full report: [REDDIT_LINK] #npm #PyPI #infosec"
+    ],
+    "linkedin_post": "This week's supply-chain digest..."
+  }
+}
+```
+
+`[REDDIT_LINK]` is a literal placeholder. Replace it manually after posting the Reddit thread.
+
+`wakellm.sh --run --social` fetches the stdout log after the job completes, reconstructs the JSON, and writes a ready-to-paste `./drafts/YYYY-MM-DD-HHmm.md` file locally.
+
 ## Package layout
 
 ```
@@ -150,9 +189,11 @@ src/
 │   ├── fetchers.py         # 5 async HTTP fetch functions
 │   ├── intel.py            # Dedup, prioritisation, fallback, enrichment
 │   ├── prompts.py          # get_security_triage_prompt()
+│   ├── social_prompts.py   # get_social_drafts_prompt()
+│   ├── social_formatter.py # run_social_drafts() — social media draft generation
 │   └── pipeline.py         # run_security_digest() — main orchestration
 └── utils/
-    ├── llm_schemas.py      # SecurityThreat, SecurityTriageResponse (Pydantic v2)
+    ├── llm_schemas.py      # SecurityThreat, SecurityTriageResponse, SocialDrafts (Pydantic v2)
     └── async_utils.py      # sleep() helper
 ```
 
@@ -168,3 +209,5 @@ src/
 | Stateless job | No database means zero operational overhead; idempotent re-runs are safe |
 | Alpine base image | Minimal attack surface; `ca-certificates` added explicitly for TLS |
 | Non-root container user | Least-privilege; defence-in-depth for container escape scenarios |
+| Social drafts as optional second call | Keeps the core digest fast and cheap; social formatting only runs when explicitly requested |
+| `[REDDIT_LINK]` placeholder | Reddit URL does not exist when drafts are generated; placeholder prevents broken links |

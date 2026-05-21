@@ -38,7 +38,7 @@ from src.security_digest.utils import (
 )
 
 
-async def run_security_digest() -> None:
+async def run_security_digest(*, social: bool = False) -> None:
     async def _empty() -> list:
         return []
 
@@ -152,8 +152,17 @@ async def run_security_digest() -> None:
         {k: v for k, v in t.items() if not (k in _SENTINEL_KEYS and v == "")}
         for t in threats
     ]
-    output = {
-        "run_at": datetime.now(timezone.utc).isoformat(),
-        "threats": output_threats,
-    }
+    run_at = datetime.now(timezone.utc).isoformat()
+    output: dict = {"run_at": run_at, "threats": output_threats}
+
+    if social:
+        from src.security_digest.social_formatter import run_social_drafts
+        drafts = await run_social_drafts(
+            output_threats,
+            gemini,
+            run_date=run_at[:10],
+        )
+        if drafts:
+            output["drafts"] = drafts.model_dump()
+
     print(json.dumps(output, indent=2))

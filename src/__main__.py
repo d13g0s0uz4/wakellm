@@ -62,16 +62,18 @@ async def _main() -> None:
         return
 
     command = args[0]
+    flags = set(args[1:])
 
     if command != "securityDigest":
         _log.error("Unknown command: %r", command)
         _print_usage(stream=sys.stderr)
         sys.exit(1)
 
-    _log.info("command=%s", command)
+    social = "--social" in flags
+    _log.info("command=%s social=%s", command, social)
 
     from src.security_digest import run_security_digest
-    await run_security_digest()
+    await run_security_digest(social=social)
 
 
 def main() -> None:

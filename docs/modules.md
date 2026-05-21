@@ -77,6 +77,8 @@ Replaces sequences of 20+ alphanumeric characters in error messages with `[REDAC
 | `SOURCES_CONFIG` | `str` | | `config/sources.yaml` | Path to feed config file |
 | `SECURITY_MONITORED_PACKAGES` | `str` | | `""` | CSV / JSON / newline list |
 | `LLM_GLOBAL_CONTEXT` | `str` | | `""` | Injected into every LLM prompt |
+| `SECURITY_MAX_TRIAGE_ITEMS` | `int` | | `40` | Intel items passed to LLM for triage |
+| `SECURITY_MAX_ALERT_THREATS` | `int` | | `10` | Max threats in final output |
 
 `_validate_gemini_base` validator rejects non-HTTPS or non-googleapis.com values.
 
@@ -135,6 +137,17 @@ Validates that every RSS feed URL starts with `https://`. Raises `ValueError` ot
 | `threats` | `list[SecurityThreat]` | `[]` |
 
 Used as the `response_schema` in `generate_json()`.
+
+### `SocialDrafts` (Pydantic BaseModel)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `reddit_title` | `str` | `""` | News-style post title |
+| `reddit_body` | `str` | `""` | Full Reddit markdown post body |
+| `twitter_thread` | `list[str]` | `[]` | Thread tweets, each ≤280 chars |
+| `linkedin_post` | `str` | `""` | Professional narrative ≤1100 chars |
+
+Used as the `response_schema` in `run_social_drafts()`.
 
 ### `log_validation_rejection(error)`
 
@@ -245,8 +258,8 @@ Inspects `cpe` criteria strings in the NVD vulnerability object for npm/PyPI ind
 
 | Name | Value | Description |
 |---|---|---|
-| `_MAX_TRIAGE_INTEL_ITEMS` | `120` | Items sent to LLM |
-| `_MAX_ALERT_THREATS` | `15` | Max threats in output |
+| `_MAX_TRIAGE_INTEL_ITEMS` | from `env` | Items sent to LLM (default 40) |
+| `_MAX_ALERT_THREATS` | from `env` | Max threats in output (default 10) |
 
 ### `_normalize_intel(items) → list[dict]`
 
@@ -273,22 +286,51 @@ Matches each threat's `source_url` against original intel items. Backfills `cve_
 
 ## `src/security_digest/prompts.py` — LLM prompt
 
-### `get_security_triage_prompt(intel_json, monitored_packages, global_context) → str`
+### `get_security_triage_prompt(intel_json, monitored_packages, global_context, max_threats) → str`
 
-Builds the full triage prompt. Structure:
+Builds the full triage prompt. `max_threats` (default: `env.SECURITY_MAX_ALERT_THREATS`) is injected into rule 4 so the model caps its response. Structure:
 1. Role statement + optional `global_context`
-2. Monitored packages block (listed first to maximise attention)
-3. Threat level rubric (CRITICAL / HIGH / MEDIUM definitions)
-4. Rules: no hallucinated URLs, discard Windows/WordPress/hardware, empty → `{"threats": []}`
+2. Threat level rubric (CRITICAL / HIGH / MEDIUM definitions)
+3. Rules: discard Windows/WordPress/hardware, focus on npm/PyPI/supply-chain, max `N` threats, no hallucinated URLs, empty → `{"threats": []}`
+4. Monitored packages line
 5. Raw intel JSON
+
+---
+
+## `src/security_digest/social_prompts.py` — Social drafts prompt
+
+### `get_social_drafts_prompt(threats_json, run_date, max_tweets) → str`
+
+Builds the social formatting prompt. `max_tweets` defaults to 8. The prompt instructs Gemini to produce a single JSON object with four keys (`reddit_title`, `reddit_body`, `twitter_thread`, `linkedin_post`) and enforces per-platform constraints:
+
+| Platform | Constraint |
+|---|---|
+| Reddit | Full markdown post; source URLs from input verbatim |
+| Twitter/X | ≤280 chars per tweet, ≤`max_tweets` total; `[REDDIT_LINK]` placeholder in closing tweet |
+| LinkedIn | 900–1100 chars; no raw CVE IDs; hashtags on final line |
+
+---
+
+## `src/security_digest/social_formatter.py` — Social draft generation
+
+### `run_social_drafts(threats, gemini, run_date, max_tweets) → SocialDrafts | None`
+
+Generates social media drafts for all three platforms in a single Gemini call.
+
+- `threats`: the finalised output threat list (dicts, not Pydantic models)
+- `gemini`: a `GeminiService` instance (reused from the pipeline run)
+- `run_date`: ISO date string used in post headers; defaults to today UTC
+- `max_tweets`: passed through to `get_social_drafts_prompt()`
+
+Uses `temperature=0.4` (higher than triage to allow more natural phrasing). Returns `None` and logs an ERROR if generation fails; the pipeline continues and omits the `drafts` key from output.
 
 ---
 
 ## `src/security_digest/pipeline.py` — Orchestration
 
-### `run_security_digest() → dict`
+### `run_security_digest(*, social) → None`
 
-Main entry point. Steps:
+Main entry point. `social=True` when `--social` flag is passed. Steps:
 
 1. Load `AppEnv` and `SourcesConfig`
 2. `asyncio.gather()` all five fetch coroutines
@@ -298,4 +340,6 @@ Main entry point. Steps:
 6. Call `GeminiService.generate_json(prompt, SecurityTriageResponse)`; on failure fall back to `_fallback_threats_from_intel()`
 7. Hallucination guard: check each `source_url`; recover via CVE lookup or drop + log WARNING
 8. `_enrich_threats()` → `_apply_monitored_priority()` → `_select_alert_threats()`
+9. If `social=True`: call `run_social_drafts()`; merge result into output envelope as `drafts`
+10. `print(json.dumps(output, indent=2))`
 9. Return `{"run_at": "<iso>", "threats": [...]}` — caller prints JSON to stdout

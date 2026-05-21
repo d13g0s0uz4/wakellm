@@ -56,6 +56,17 @@ class SecurityTriageResponse(BaseModel):
     threats: list[SecurityThreat] = []
 
 
+class SocialDrafts(BaseModel):
+    """Social media drafts generated from the security digest."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    reddit_title: str = ""
+    reddit_body: str = ""
+    twitter_thread: list[str] = []
+    linkedin_post: str = ""
+
+
 def log_validation_rejection(
     module: str,
     record_type: str,

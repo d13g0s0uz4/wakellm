@@ -123,7 +123,44 @@ TAG=v1.2.3 ./wakellm.sh --deploy --prod
 ./wakellm.sh --run --dev
 ```
 
-This executes `gcloud run jobs execute <JOB_NAME> --args='securityDigest' --wait`. The `--wait` flag blocks until the execution completes and streams logs.
+This executes `gcloud run jobs execute <JOB_NAME> --args='securityDigest' --wait`. The `--wait` flag blocks until the execution completes.
+
+### With social media drafts
+
+```bash
+./wakellm.sh --run --dev --social
+```
+
+This passes `securityDigest --social` as args to the Cloud Run job. After the execution completes, `wakellm.sh` automatically:
+
+1. Retrieves the stdout log for the execution via `gcloud logging read`
+2. Reconstructs the JSON output (Cloud Run logs each printed line separately)
+3. Extracts the `drafts` block and writes `./drafts/YYYY-MM-DD-HHmm.md`
+
+The markdown file has three ready-to-paste sections:
+
+```
+# Security Digest — 2026-05-22
+
+---
+## Reddit
+**Title:** 3 npm/supply-chain threats this week: CVE-2025-30066, ...
+[full markdown post]
+
+---
+## Twitter/X Thread
+**Tweet 1** (87 chars):
+> 3 npm/supply-chain threats this week ...
+...
+
+---
+## LinkedIn
+[professional narrative with hashtags]
+```
+
+Tweets that exceed 280 characters are flagged with `*** OVER 280 ***` so you can trim before posting.
+
+After posting to Reddit, replace `[REDDIT_LINK]` in the Twitter/X closing tweet and LinkedIn post with the actual URL.
 
 ### Viewing output
 

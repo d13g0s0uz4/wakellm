@@ -8,6 +8,7 @@
 # Flags:
 #   --deploy         Build image via Cloud Build, scan with Trivy, deploy Cloud Run Job
 #   --run            Trigger a job execution (gcloud run jobs execute)
+#   --social         With --run: generate social media drafts and save to ./drafts/
 #   --dev            Target dev job (deploy creates it if missing)
 #   --prod           Target prod job (default; deploy update-only)
 #
@@ -30,6 +31,7 @@ set -euo pipefail
 ACTION=""
 DEV_FLAG=0
 PROD_FLAG=0
+SOCIAL_FLAG=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       PROD_FLAG=1
       shift
       ;;
+    --social)
+      SOCIAL_FLAG=1
+      shift
+      ;;
     -h|--help)
       cat <<'EOF'
 Usage: ./wakellm.sh --deploy [--dev|--prod]
@@ -57,6 +63,7 @@ Usage: ./wakellm.sh --deploy [--dev|--prod]
 Actions:
   --deploy   Build image, Trivy scan, deploy Cloud Run Job
   --run      Execute the Cloud Run Job (securityDigest command)
+  --social   With --run: also generate social media drafts, save to ./drafts/
 
 Environments:
   --dev      Target dev job (--deploy creates it if missing)
@@ -85,6 +92,11 @@ fi
 
 if [[ "$DEV_FLAG" -eq 1 && "$PROD_FLAG" -eq 1 ]]; then
   echo "ERROR: Use only one of --dev or --prod." >&2
+  exit 1
+fi
+
+if [[ "$SOCIAL_FLAG" -eq 1 && "$ACTION" != "run" ]]; then
+  echo "ERROR: --social can only be used with --run." >&2
   exit 1
 fi
 
@@ -146,17 +158,88 @@ if [[ "$ACTION" == "run" ]]; then
   echo "  Job         : $TARGET_JOB_NAME"
   echo "════════════════════════════════════════"
   echo ""
-  echo "▶ Executing: gcloud run jobs execute $TARGET_JOB_NAME --args='securityDigest'"
+
+  JOB_ARGS="securityDigest"
+  [[ "$SOCIAL_FLAG" -eq 1 ]] && JOB_ARGS="securityDigest,--social"
+
+  echo "▶ Executing: gcloud run jobs execute $TARGET_JOB_NAME --args='$JOB_ARGS'"
   echo ""
 
   gcloud run jobs execute "$TARGET_JOB_NAME" \
     --project="$PROJECT" \
     --region="$REGION" \
     --wait \
-    --args="securityDigest"
+    --args="$JOB_ARGS"
 
   echo ""
   echo "✓ Execution complete."
+
+  if [[ "$SOCIAL_FLAG" -eq 1 ]]; then
+    echo ""
+    echo "▶ Fetching social drafts from logs..."
+    EXEC_NAME=$(gcloud run jobs executions list \
+      --job="$TARGET_JOB_NAME" \
+      --project="$PROJECT" \
+      --region="$REGION" \
+      --limit=1 \
+      --sort-by="~metadata.creationTimestamp" \
+      --format='get(metadata.name)' 2>/dev/null)
+
+    if [[ -z "$EXEC_NAME" ]]; then
+      echo "WARNING: Could not determine execution name; skipping draft save." >&2
+    else
+      mkdir -p drafts
+      DRAFT_FILE="drafts/$(date +%Y-%m-%d-%H%M).md"
+      RAW_JSON=$(gcloud logging read \
+        "resource.type=cloud_run_job AND labels.\"run.googleapis.com/execution_name\"=\"${EXEC_NAME}\" AND logName:stdout" \
+        --project="$PROJECT" \
+        --order=asc \
+        --format='value(textPayload)' 2>/dev/null)
+
+      python3 - "$DRAFT_FILE" <<PYEOF
+import sys, json
+from datetime import datetime
+
+draft_file = sys.argv[1]
+raw = """${RAW_JSON}"""
+try:
+    data = json.loads(raw)
+except Exception as e:
+    open(draft_file, 'w').write(f'# Parse error\n\n{e}\n\nRaw:\n```\n{raw[:3000]}\n```\n')
+    sys.exit(0)
+
+drafts = data.get('drafts')
+if not drafts:
+    open(draft_file, 'w').write('# No social drafts found in output.\n')
+    sys.exit(0)
+
+run_at = data.get('run_at', '')[:10]
+lines = []
+lines.append(f'# Security Digest - {run_at}\n')
+lines.append(f'*Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}*\n')
+lines.append('---\n')
+lines.append('## Reddit\n')
+lines.append(f'**Title:** {drafts["reddit_title"]}\n')
+lines.append(drafts['reddit_body'])
+lines.append('\n---\n')
+lines.append('## Twitter/X Thread\n')
+for i, tweet in enumerate(drafts.get('twitter_thread', []), 1):
+    chars = len(tweet)
+    over = ' *** OVER 280 ***' if chars > 280 else ''
+    lines.append(f'**Tweet {i}** ({chars} chars){over}:\n')
+    lines.append(f'> {tweet}\n')
+lines.append('\n---\n')
+lines.append('## LinkedIn\n')
+lines.append(drafts['linkedin_post'])
+lines.append('\n')
+open(draft_file, 'w', encoding='utf-8').write('\n'.join(lines))
+print(f'Saved to {draft_file}')
+PYEOF
+
+      echo "✓ Social drafts saved to $DRAFT_FILE"
+    fi
+  fi
+
   exit 0
 fi
 

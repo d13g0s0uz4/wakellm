@@ -8,3 +8,4 @@ coverage/
 *.pyc
 __pycache__/
 .planning/
+.drafts/
