@@ -30,10 +30,10 @@ class AppEnv(BaseSettings):
     SECURITY_MONITORED_PACKAGES: str = ""
 
     # Maximum number of intel items passed to the LLM for triage.
-    SECURITY_MAX_TRIAGE_ITEMS: int = 40
+    SECURITY_MAX_TRIAGE_ITEMS: int = 80
 
     # Maximum number of threats included in the final output.
-    SECURITY_MAX_ALERT_THREATS: int = 10
+    SECURITY_MAX_ALERT_THREATS: int = 40
 
     @field_validator("GEMINI_API_BASE")
     @classmethod
