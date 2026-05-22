@@ -4,7 +4,7 @@ from __future__ import annotations
 def get_social_drafts_prompt(
     threats_json: str,
     run_date: str,
-    max_tweets: int = 8,
+    max_tweets: int = 12,
 ) -> str:
     return f"""You are a DevSecOps content writer producing a daily security digest for software developers.
 

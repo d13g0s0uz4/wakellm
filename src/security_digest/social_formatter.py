@@ -15,7 +15,7 @@ async def run_social_drafts(
     threats: list[dict],
     gemini: GeminiService,
     run_date: str | None = None,
-    max_tweets: int = 8,
+    max_tweets: int = 12,
 ) -> SocialDrafts | None:
     if not threats:
         _log.warning("[social] No threats — skipping social draft generation.")

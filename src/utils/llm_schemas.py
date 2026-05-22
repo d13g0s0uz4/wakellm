@@ -33,10 +33,29 @@ class SecurityThreat(BaseModel):
     @classmethod
     def _normalize_ecosystem(cls, v: str) -> str:
         _CANONICAL = {
+            # supply-chain variants
             "supply chain": "supply-chain",
             "supply_chain": "supply-chain",
+            # PyPI variants
             "pypi": "PyPI",
             "pip": "PyPI",
+            "python": "PyPI",
+            "python/pypi": "PyPI",
+            # npm variants
+            "javascript": "npm",
+            "node": "npm",
+            "node.js": "npm",
+            "nodejs": "npm",
+            # AI/ML tooling — keep as canonical label
+            "ai/ml": "ai-ml",
+            "ai/ml tooling": "ai-ml",
+            "ai/ml developer tooling": "ai-ml",
+            "ai-ml developer tooling": "ai-ml",
+            "ai": "ai-ml",
+            "ml": "ai-ml",
+            # Python package variants
+            "python package": "PyPI",
+            "python library": "PyPI",
         }
         return _CANONICAL.get(v.lower().strip(), v)
 
