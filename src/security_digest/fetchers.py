@@ -37,7 +37,7 @@ async def fetch_github_advisories(
             *[
                 client.get(
                     "https://api.github.com/advisories",
-                    params={"ecosystem": eco, "per_page": str(per_page)},
+                params={"ecosystem": eco, "per_page": str(per_page), "sort": "published", "direction": "desc"},
                     headers=headers,
                 )
                 for eco in ecosystems
@@ -330,6 +330,10 @@ async def fetch_nvd_cves(api_url: str) -> list[dict[str, str]]:
         ecosystem = _infer_ecosystem_from_nvd(cve, f"{title} {description}")
         published = _safe_iso_date(str(cve.get("published") or ""))
 
+        # Discard NVD entries with no developer-relevant keywords.
+        if not any(kw in f"{title} {description}".lower() for kw in _DEV_RELEVANCE_KEYWORDS):
+            continue
+
         items.append(
             {
                 "title": title,
@@ -346,9 +350,9 @@ async def fetch_nvd_cves(api_url: str) -> list[dict[str, str]]:
     return items
 
 
-# Keywords that indicate a CISA KEV entry is relevant to developer supply-chain security.
-# Entries with none of these terms in their combined text are discarded before triage.
-_CISA_KEV_ALLOWLIST: frozenset[str] = frozenset([
+# Keywords indicating relevance to developer supply-chain security.
+# Applied to both NVD and CISA KEV entries before triage.
+_DEV_RELEVANCE_KEYWORDS: frozenset[str] = frozenset([
     "npm", "node", "javascript", "typescript",
     "pypi", "python", "pip",
     "rubygems", "ruby", "gem",
@@ -430,7 +434,7 @@ async def fetch_cisa_kev(feed_url: str) -> list[dict[str, str]]:
 
         # Discard entries with no developer-relevant keywords.
         combined_lower = f"{title} {snippet}".lower()
-        if not any(kw in combined_lower for kw in _CISA_KEV_ALLOWLIST):
+        if not any(kw in combined_lower for kw in _DEV_RELEVANCE_KEYWORDS):
             continue
 
         items.append(

@@ -24,8 +24,8 @@ def _normalize_intel(items: list[dict[str, str]]) -> list[dict[str, str]]:
             unique[key] = item
 
     # Second pass: deduplicate by CVE ID, keeping the highest-authority source.
-    # Authority: CISA KEV (0) > NIST NVD (1) > GitHub Advisory (2) > others (99)
-    _AUTHORITY: dict[str, int] = {"CISA KEV": 0, "NIST NVD": 1, "GitHub Advisory": 2}
+    # Authority: GitHub Advisory (0) > CISA KEV (1) > NIST NVD (2) > others (99)
+    _AUTHORITY: dict[str, int] = {"GitHub Advisory": 0, "CISA KEV": 1, "NIST NVD": 2}
     by_cve: dict[str, dict[str, str]] = {}
     deduped: list[dict[str, str]] = []
     for item in unique.values():
@@ -47,9 +47,10 @@ def _normalize_intel(items: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def _prioritize_intel_for_triage(intel_items: list[dict[str, str]]) -> list[dict[str, str]]:
     source_rank = {
-        "CISA KEV": 0,
+        "GitHub Advisory": 0,
         "NIST NVD": 1,
-        "GitHub Advisory": 2,
+        "CISA KEV": 2,
+        # RSS (URL as source) and Reddit fall to default rank 3
     }
 
     def _rank(item: dict[str, str]) -> tuple[int, int, float]:
