@@ -369,6 +369,7 @@ async def fetch_cisa_kev(feed_url: str) -> list[dict[str, str]]:
         return []
 
     items: list[dict[str, str]] = []
+    kev_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     for vulnerability in vulnerabilities:
         if not isinstance(vulnerability, dict):
             continue
@@ -376,6 +377,14 @@ async def fetch_cisa_kev(feed_url: str) -> list[dict[str, str]]:
         cve_id = _normalize_cve_id(str(vulnerability.get("cveID") or ""))
         if not cve_id:
             continue
+
+        date_added_raw = str(vulnerability.get("dateAdded") or "")
+        try:
+            date_added_dt = datetime.fromisoformat(_safe_iso_date(date_added_raw))
+            if date_added_dt < kev_cutoff:
+                continue
+        except Exception:
+            pass  # keep if date unparseable
 
         vendor = str(vulnerability.get("vendorProject") or "").strip()
         product = str(vulnerability.get("product") or "").strip()

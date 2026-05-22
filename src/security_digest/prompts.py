@@ -17,9 +17,24 @@ Threat level rubric:
 - HIGH: known CVE with public PoC, or widely-used dependency affected (>10k weekly downloads)
 - MEDIUM: theoretical attack vector, limited scope, or unconfirmed report
 
-1. Discard any vulnerabilities related to WordPress, Windows OS, or hardware.
-2. Isolate threats specifically related to: 'npm', 'PyPI', 'supply chain', 'typosquatting', or 'malicious packages'.
-3. For the relevant threats, assign a Threat Level using the rubric above.
+1. KEEP ONLY threats where the affected software is one of:
+   - An npm or PyPI package (or other package registry: RubyGems, Maven, NuGet, Cargo, Go modules)
+   - A GitHub Action or CI/CD pipeline tool (GitHub Actions, Jenkins, CircleCI, GitLab CI, ArgoCD)
+   - A developer tool used in build/test/scan workflows (bundlers, compilers, linters, SAST/DAST, container scanners)
+   - An open-source library or framework used directly in application code
+   - AI/ML developer tooling (LangChain, LiteLLM, Ollama, Langflow, n8n, etc.)
+   - A package registry or software distribution channel
+2. DISCARD everything else, including:
+   - Enterprise network appliances (Cisco, Fortinet, Juniper, Palo Alto, F5, SonicWall)
+   - End-user desktop applications (Adobe Acrobat, Microsoft Office, browsers)
+   - Mobile OS (iOS, Android platform vulnerabilities)
+   - Industrial/OT/ICS systems (Rockwell, Siemens, SCADA)
+   - Enterprise IT management (SolarWinds, Ivanti, Quest KACE, VMware, Omnissa)
+   - Email/collaboration servers (Exchange, SharePoint)
+   - Operating system vulnerabilities (Windows, macOS, Linux kernel)
+   - Hardware and firmware
+   - CMS platforms (WordPress, Drupal, Craft CMS, Joomla)
+3. For the remaining threats, assign a Threat Level using the rubric above.
 4. Return at most {max_threats} threats, prioritising CRITICAL over HIGH over MEDIUM.
 5. Output strictly as JSON:
 {{
