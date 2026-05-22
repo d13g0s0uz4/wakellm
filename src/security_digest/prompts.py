@@ -22,8 +22,8 @@ Threat level rubric:
    - A GitHub Action or CI/CD pipeline tool (GitHub Actions, Jenkins, CircleCI, GitLab CI, ArgoCD)
    - A developer tool used in build/test/scan workflows (bundlers, compilers, linters, SAST/DAST, container scanners)
    - An open-source library or framework used directly in application code
-   - AI/ML developer tooling (LangChain, LiteLLM, Ollama, Langflow, n8n, etc.)
-   - A package registry or software distribution channel
+   - AI/ML developer tooling (LangChain, LiteLLM, Ollama, Langflow, n8n, Hugging Face, etc.)
+   - The npm registry, PyPI, or another package registry / package signing infrastructure itself
 2. DISCARD everything else, including:
    - Enterprise network appliances (Cisco, Fortinet, Juniper, Palo Alto, F5, SonicWall)
    - End-user desktop applications (Adobe Acrobat, Microsoft Office, browsers)
@@ -34,6 +34,9 @@ Threat level rubric:
    - Operating system vulnerabilities (Windows, macOS, Linux kernel)
    - Hardware and firmware
    - CMS platforms (WordPress, Drupal, Craft CMS, Joomla)
+   - Line-of-business applications (ERP, CRM, call centre, student info, hospital, HR systems)
+   - Network management or monitoring appliances (SIEM appliances, hotspot controllers, firewall management)
+   - Any product where it is unclear whether software developers would have it as a direct dependency
 3. For the remaining threats, assign a Threat Level using the rubric above.
 4. Return at most {max_threats} threats, prioritising CRITICAL over HIGH over MEDIUM.
 5. Output strictly as JSON:

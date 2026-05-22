@@ -346,6 +346,30 @@ async def fetch_nvd_cves(api_url: str) -> list[dict[str, str]]:
     return items
 
 
+# Keywords that indicate a CISA KEV entry is relevant to developer supply-chain security.
+# Entries with none of these terms in their combined text are discarded before triage.
+_CISA_KEV_ALLOWLIST: frozenset[str] = frozenset([
+    "npm", "node", "javascript", "typescript",
+    "pypi", "python", "pip",
+    "rubygems", "ruby", "gem",
+    "maven", "gradle", "java", "spring",
+    "nuget", ".net", "dotnet",
+    "cargo", "rust",
+    "go module", "golang",
+    "github action", "github actions", "workflow",
+    "ci/cd", "jenkins", "circleci", "gitlab",
+    "docker", "container", "kubernetes", "helm",
+    "terraform", "ansible",
+    "supply chain", "supply-chain",
+    "malicious package", "typosquat",
+    "package manager", "package registry",
+    "open source", "open-source",
+    "dependency", "library",
+    "langchain", "litellm", "ollama", "langflow", "huggingface",
+    "trivy", "snyk", "sonarqube",
+])
+
+
 async def fetch_cisa_kev(feed_url: str) -> list[dict[str, str]]:
     headers = {
         "Accept": "application/json",
@@ -403,6 +427,11 @@ async def fetch_cisa_kev(feed_url: str) -> list[dict[str, str]]:
             snippet = f"{snippet}. Known ransomware campaign use: {ransomware}." if snippet else f"Known ransomware campaign use: {ransomware}."
 
         ecosystem_hint = _infer_ecosystem(f"{title} {snippet}")
+
+        # Discard entries with no developer-relevant keywords.
+        combined_lower = f"{title} {snippet}".lower()
+        if not any(kw in combined_lower for kw in _CISA_KEV_ALLOWLIST):
+            continue
 
         items.append(
             {
