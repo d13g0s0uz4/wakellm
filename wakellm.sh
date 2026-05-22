@@ -196,12 +196,16 @@ if [[ "$ACTION" == "run" ]]; then
         --order=asc \
         --format='value(textPayload)' 2>/dev/null)
 
-      python3 - "$DRAFT_FILE" <<PYEOF
-import sys, json
+      TMPJSON=$(mktemp)
+      printf '%s' "${RAW_JSON}" > "$TMPJSON"
+      python3 - "$DRAFT_FILE" "$TMPJSON" <<'PYEOF'
+import sys, json, os
 from datetime import datetime
 
 draft_file = sys.argv[1]
-raw = """${RAW_JSON}"""
+tmpjson = sys.argv[2]
+raw = open(tmpjson, encoding='utf-8').read()
+os.unlink(tmpjson)
 try:
     data = json.loads(raw)
 except Exception as e:
@@ -235,6 +239,7 @@ lines.append('\n')
 open(draft_file, 'w', encoding='utf-8').write('\n'.join(lines))
 print(f'Saved to {draft_file}')
 PYEOF
+      rm -f "$TMPJSON"
 
       echo "✓ Social drafts saved to $DRAFT_FILE"
     fi
