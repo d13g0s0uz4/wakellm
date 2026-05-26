@@ -35,6 +35,10 @@ class AppEnv(BaseSettings):
     # Maximum number of threats included in the final output.
     SECURITY_MAX_ALERT_THREATS: int = 15
 
+    # How many hours back to consider when fetching advisories.
+    # 0 = auto: 72h on Monday (to cover the weekend), 24h on all other days.
+    SECURITY_LOOKBACK_HOURS: int = 0
+
     @field_validator("GEMINI_API_BASE")
     @classmethod
     def _validate_gemini_base(cls, v: str) -> str:

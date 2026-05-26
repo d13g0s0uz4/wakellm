@@ -24,6 +24,7 @@ _ATOM_NS = "http://www.w3.org/2005/Atom"
 async def fetch_github_advisories(
     ecosystems: list[str],
     per_page: int = 50,
+    lookback_hours: int = 24,
 ) -> list[dict[str, str]]:
     headers = {
         "Accept": "application/vnd.github+json",
@@ -31,6 +32,8 @@ async def fetch_github_advisories(
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "wakellm-security",
     }
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         responses = await asyncio.gather(
@@ -88,6 +91,12 @@ async def fetch_github_advisories(
                 ) or "",
                 "fixed_version": fixed_version or "",
             }
+            try:
+                pub_dt = datetime.fromisoformat(item["published_at"])
+                if pub_dt < cutoff:
+                    continue
+            except Exception:
+                pass
             items.append(item)
 
     return items

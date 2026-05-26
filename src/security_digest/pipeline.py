@@ -44,12 +44,19 @@ async def run_security_digest(*, social: bool = False) -> None:
 
     _log.info("=== STARTING SECURITY DIGEST PIPELINE ===")
 
+    if env.SECURITY_LOOKBACK_HOURS == 0:
+        # Auto: Monday covers Fri+Sat+Sun (72h), all other weekdays use 24h.
+        lookback_hours = 72 if datetime.now(timezone.utc).weekday() == 0 else 24
+    else:
+        lookback_hours = env.SECURITY_LOOKBACK_HOURS
+    _log.info("[config] lookback_hours=%d", lookback_hours)
+
     sources = SourcesConfig.load(env.SOURCES_CONFIG)
     gemini = GeminiService()
     monitored_packages = _parse_monitored_packages(env.SECURITY_MONITORED_PACKAGES or None)
 
     fetch_tasks = [
-        fetch_github_advisories(sources.github_advisories.ecosystems, sources.github_advisories.per_page)
+        fetch_github_advisories(sources.github_advisories.ecosystems, sources.github_advisories.per_page, lookback_hours)
         if sources.github_advisories.enabled else _empty(),
         fetch_reddit_json(sources.reddit.subreddits)
         if sources.reddit.enabled else _empty(),
