@@ -232,9 +232,6 @@ for i, tweet in enumerate(drafts.get('twitter_thread', []), 1):
     over = ' *** OVER 280 ***' if chars > 280 else ''
     lines.append(f'**Tweet {i}** ({chars} chars){over}:\n')
     lines.append(f'> {tweet}\n')
-lines.append('\n---\n')
-lines.append('## LinkedIn\n')
-lines.append(drafts['linkedin_post'])
 lines.append('\n')
 open(draft_file, 'w', encoding='utf-8').write('\n'.join(lines))
 print(f'Saved to {draft_file}')

@@ -83,7 +83,6 @@ class SocialDrafts(BaseModel):
     reddit_title: str = ""
     reddit_body: str = ""
     twitter_thread: list[str] = []
-    linkedin_post: str = ""
 
 
 def log_validation_rejection(

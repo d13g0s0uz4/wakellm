@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+REPO_URL = "https://github.com/Deam0on/wakellm"
+
 
 def get_social_drafts_prompt(
     threats_json: str,
@@ -11,26 +13,39 @@ def get_social_drafts_prompt(
 Date: {run_date}
 Input: a JSON list of confirmed npm / PyPI / supply-chain security threats detected in the past 24 hours.
 
-Write social media content for three platforms. Return strictly as JSON with this exact structure:
+Write social media content for two platforms. Return strictly as JSON with this exact structure:
 {{
-  "reddit_title": "<news-style title - specific, factual, no clickbait. Pattern: 'N npm/PyPI/supply-chain threats today ({run_date}): CVE-XXXX-XXXX, <package>, ...' Mention the highest-severity items by name.>",
-  "reddit_body": "<Full Reddit markdown post. Open with a one-paragraph intro (date, sources, threat count, past-24h framing). Then for each threat one ### section with the threat title as heading, then **Ecosystem**, **CVE** (if present), **Severity**, summary sentence, action required, and a source link as [Source](<url>). Close with: 'Automated daily digest - feedback welcome.' Reddit markdown only, no HTML.>",
+  "reddit_title": "<news-style title — specific, factual, no clickbait. Pattern: 'N npm/PyPI/supply-chain threats today ({run_date}): CVE-XXXX (package), CVE-XXXX (package), ...' Mention the highest-severity items by name.>",
+  "reddit_body": "<Full Reddit markdown post. Structure:
+
+1. One-paragraph intro: date, source count, threat count, past-24h framing.
+
+2. A markdown overview table immediately after the intro with columns:
+   | # | Package / Advisory | Ecosystem | Severity | Fix |
+   |---|---|---|---|---|
+   One row per threat. # is the sequence number. Package / Advisory is the package name plus CVE if present (e.g. `@cap-js/sqlite` · CVE-2026-46421). Severity is CRITICAL/HIGH/MEDIUM. Fix is the patched version or 'Uninstall' or 'Update' as applicable.
+
+3. Then one ### section per threat (same order as the table) with: threat title as heading, **Ecosystem**, **CVE** (if present), **Severity**, a 1-2 sentence summary, **Action Required**, and [Source](<url>).
+
+4. Closing line: 'Automated daily digest — feedback welcome. Repo: {REPO_URL}'
+
+Reddit markdown only, no HTML. Use the source_url values from the input verbatim for source links.>",
   "twitter_thread": [
-    "<Tweet 1 (hook, <=280 chars): number of threats, ecosystems affected, thread marker. E.g. '3 npm/PyPI supply-chain threats in the last 24h: malicious packages, CI/CD compromise, AI tooling SQLi. Thread #infosec #supplychain'>",
-    "<Tweets 2..N (<=280 chars each): one per threat. CRITICAL/HIGH/MEDIUM + package or short CVE reference + one-line impact. No URLs in middle tweets.>",
-    "<Final tweet (<=280 chars): 'Full report with CVE details and remediation steps: [REDDIT_LINK] #npm #PyPI #infosec #supplychain'>"
-  ],
-  "linkedin_post": "<Professional narrative, 900-1100 chars total. Business-risk hook opening (no raw CVE IDs). Describe 2-3 top threats in plain language, framed as past-24h detections. One sentence on what engineers should do now. Closing line about following for daily security updates. End with a new line of 6-8 hashtags. Do not exceed 1100 chars.>"
+    "<Tweet 1 (hook, <=280 chars): number of threats, ecosystems affected, top package names, thread emoji 🧵. Include #DevSec #supplychain hashtags.>",
+    "<Tweets 2..N (<=280 chars each): one per threat. Format: 'SEVERITY: `package` — one-line impact (CVE-XXXX-XXXX)'. No URLs. Include relevant hashtag e.g. #npm or #PyPI on CRITICAL tweets only.>",
+    "<Final tweet (<=280 chars): 'Full report + remediation steps: [REDDIT_LINK]\\nRepo: {REPO_URL}\\n#npm #PyPI #infosec #supplychain'>"
+  ]
 }}
 
 Rules:
-- Each tweet in twitter_thread must be <=280 characters - count carefully
+- Each tweet in twitter_thread must be <=280 characters — count carefully
 - twitter_thread must have at most {max_tweets} tweets total (hook + per-threat + closing)
-- linkedin_post must not exceed 1100 characters total
 - reddit_body source links must use the source_url values from the input verbatim
-- [REDDIT_LINK] is a literal placeholder - do not replace it
+- [REDDIT_LINK] is a literal placeholder in the final tweet — do not replace it
 - Do not invent CVE IDs, package names, or version numbers not present in the input
-- If the input has fewer than 3 threats, cover all of them; do not pad with invented content
+- The overview table must list every threat; do not omit any
+- If a threat has no fixed version, use 'Update' in the Fix column
+- Keep tweet 2..N factual and tight — no filler words
 
 Threats JSON:
 {threats_json}
